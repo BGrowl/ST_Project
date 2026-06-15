@@ -1,0 +1,537 @@
+% !TeX program = pdflatex
+\documentclass[10pt,conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+
+\usepackage{cite}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\graphicspath{{figures/}}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{url}
+\usepackage{xcolor}
+\usepackage[hidelinks]{hyperref}
+\hbadness=10000
+
+\vbadness=10000
+\newcommand{\figureplaceholder}[3]{%
+\fbox{%
+\begin{minipage}[c][#2][c]{#1}
+\centering\small\textbf{Image Placeholder}\par
+#3\par
+\end{minipage}}}
+
+\title{A Finger-Clip Peripheral Circulation Monitoring System Based on PPG Features and Perfusion Index}
+
+\author{
+\IEEEauthorblockN{Anonymous Authors}
+\IEEEauthorblockA{Sensor Principles and Applications Project}
+}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Peripheral circulation reflects cardiovascular regulation, tissue perfusion, and short-term autonomic activity. This paper presents a finger-clip monitoring prototype based on photoplethysmography (PPG). The system uses a MAX30102 optical sensor for red/infrared signal acquisition, an Arduino node for infrared-channel reading, pulse detection, pulse-to-pulse interval estimation, heart-rate calculation, short-term heart-rate variability (HRV) estimation, and perfusion index (PI) calculation. A Python host interface receives key-value serial frames at 115200 bps and visualizes the PPG waveform, heart rate, average heart rate, RR/PPI interval, HRV, PI, and signal-quality state in real time.
+
+The contribution of the project is not a medical-grade device, but an integrated sensing prototype that connects optical acquisition, embedded processing, signal-quality control, feature extraction, and user feedback. To reduce false interpretation caused by weak contact and motion artifacts, the system introduces finger-contact thresholds, RR range filtering, interval-jump rejection, PI/amplitude-based quality assessment, and a four-state signal-quality machine.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Photoplethysmography, PPG, MAX30102, Arduino, heart-rate variability, perfusion index, peripheral circulation, signal quality.
+\end{IEEEkeywords}
+
+\section{Introduction}
+Peripheral circulation monitoring provides useful information about cardiovascular rhythm, peripheral perfusion, recovery state, and short-term autonomic regulation. Traditional monitoring devices are often optimized for clinical environments, while daily health observation and sensor teaching require a compact, low-cost, and interpretable prototype. A finger-clip PPG system is therefore suitable for demonstrating optical sensing, embedded feature extraction, serial communication, and real-time user interaction.
+
+PPG measures optical intensity variation caused by periodic blood-volume changes in tissue. In a finger-clip configuration, red or infrared light is emitted into the fingertip, and the reflected or transmitted optical signal is captured by a photodetector. Pulse peaks in the PPG waveform can be used to estimate heart rate. Stable pulse-to-pulse intervals can approximate RR intervals for short-term HRV analysis, while the ratio between pulsatile and baseline waveform components can be used to estimate PI.
+
+The objective of this project is to implement a complete PPG-based peripheral circulation monitoring system rather than a simple heart-rate display. The main engineering questions are: how to acquire stable infrared PPG data using MAX30102; how to estimate heart rate and short-term HRV from valid pulse intervals; how to compute PI as both a perfusion and signal-quality indicator; and how to present waveform, numerical indicators, and quality feedback to users in real time.
+
+
+From an engineering perspective, this project also emphasizes interpretability. Many low-cost physiological sensing prototypes report a single numerical value even when the underlying waveform is unstable. Such a design may be misleading because PPG features are strongly affected by sensor placement, contact pressure, motion, peripheral temperature, and local perfusion. Therefore, the proposed prototype treats signal quality as a first-class output rather than an internal implementation detail. The user interface does not only display HR and HRV, but also indicates whether the current waveform is reliable enough for interpretation.
+
+The system is designed for reproducible classroom implementation. MAX30102 and Arduino are widely available, the communication protocol is human-readable, and the host software can be implemented using common Python visualization libraries. This makes the prototype suitable for teaching the full chain of sensor-based systems: physical sensing, embedded acquisition, signal preprocessing, feature extraction, communication, visualization, and user-centered feedback.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.92\textwidth]{fig1_system_architecture}
+\caption{Overall architecture of the PulseWave-PI system. The prototype integrates finger-clip PPG sensing, Arduino-based signal acquisition and feature extraction, serial communication, and host-side visualization to provide real-time HR, HRV, PI, waveform, and signal-quality feedback.}
+\label{fig:system-architecture}
+\end{figure*}
+
+\section{Related Work}
+\subsection{PPG-Based Physiological Monitoring}
+PPG has been widely used in wearable and portable monitoring systems because it provides a non-invasive optical measurement of blood-volume change. Fingertip PPG is especially common because the finger has rich microvascular structure and can be measured using compact light-emitting and photodetection hardware. Prior studies have shown that PPG waveforms can support heart-rate estimation, pulse-arrival analysis, and signal-quality assessment. However, PPG is also known to be sensitive to motion, contact pressure, ambient light, skin condition, and peripheral temperature. These factors make quality control essential in low-cost systems.
+
+Compared with clinical instruments, teaching-oriented PPG prototypes usually prioritize transparency, low cost, and ease of debugging. A course prototype should allow students to observe raw waveforms, understand how peaks are detected, and see how noise affects physiological indicators. Therefore, the design in this paper favors interpretable signal-processing rules over opaque models. This makes the system easier to reproduce and analyze in a laboratory or classroom setting.
+
+\subsection{Heart-Rate Variability from Pulse Signals}
+HRV is traditionally calculated from ECG R-R intervals. In contrast, this project uses PPG pulse-to-pulse intervals as an approximate substitute. This approximation is convenient but imperfect because pulse timing includes not only cardiac rhythm but also vascular propagation effects. For short-term interaction feedback, the approximation can still be useful if the waveform is stable and artifacts are rejected. For medical interpretation, however, ECG reference measurements are required.
+
+The most important lesson for a prototype is that HRV should not be computed from arbitrary peak intervals. A single false peak can cause a large interval error, and a few interval errors can dominate RMSSD. Therefore, the system delays HRV output until enough valid intervals are collected and resets the buffer when the interval sequence becomes implausible. This conservative behavior is more useful than continuously displaying unstable values.
+
+\subsection{Perfusion Index and Signal Quality}
+PI is related to the ratio of pulsatile signal amplitude to baseline optical intensity. Although the exact value depends on sensor configuration and measurement site, the relative trend is useful for identifying weak contact and low pulsatile strength. In this prototype, PI is not treated as a stand-alone medical metric. Instead, it is combined with waveform amplitude and RR stability to determine whether the current measurement is reliable enough for HRV feedback.
+
+Signal quality is often the hidden reason behind inconsistent wearable measurements. If quality is not displayed, users may interpret every change as a physiological change. By explicitly showing Checking, Weak Signal, Motion, and Good states, the proposed system turns measurement reliability into an observable part of the interface.
+
+\section{System Objectives}
+The system is designed around four main outputs: heart rate (HR), HRV, PI, and the PPG waveform. HR provides an intuitive measure of current cardiac rhythm. HRV reflects beat-to-beat interval variability and is used as a short-term indicator of stress, recovery, or autonomic balance. PI describes the relative strength of pulsatile blood flow and provides a signal-quality cue. The PPG waveform provides the visual basis for peak detection and artifact inspection.
+
+
+In addition to these outputs, the system must satisfy several practical requirements. First, the acquisition loop should be stable enough to preserve the temporal structure of the pulse waveform. Second, feature extraction should reject obvious artifacts before calculating HRV, because HRV is highly sensitive to abnormal intervals. Third, the serial protocol should be simple enough for debugging while still carrying all relevant fields. Fourth, the user interface should make the difference between physiological change and measurement artifact understandable to non-expert users.
+
+The expected usage scenario is short-duration observation rather than continuous clinical monitoring. A user places a finger on the clip, waits for the system to enter a stable state, and then observes HR, HRV, PI, waveform morphology, and quality-state feedback. During demonstrations, the user can intentionally loosen contact or move the finger to observe how motion and weak signal conditions affect the measured indicators.
+
+\begin{table}[t]
+\centering
+\caption{Main System Output Indicators}
+\label{tab:targets}
+\begin{tabular}{p{1.7cm}p{2.5cm}p{3.1cm}}
+\toprule
+\textbf{Indicator} & \textbf{Source} & \textbf{Purpose} \\
+\midrule
+HR & Valid PPG peak interval & Real-time cardiac rhythm display \\
+HRV & Quality-controlled PPI/RR sequence & Short-term variability feedback \\
+PI & AC/DC ratio of PPG & Perfusion and signal-quality cue \\
+PPG waveform & MAX30102 IR channel & Visualization and artifact inspection \\
+Quality state & PI, amplitude, RR stability & Reliability-aware feedback \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The prototype is intended for course demonstration and engineering validation. It is not a clinical medical device. Since PPG is sensitive to finger pressure, skin condition, ambient light, motion artifacts, contact stability, and algorithm thresholds, the outputs should be interpreted as trend references rather than diagnostic conclusions. In particular, PPG-derived pulse-to-pulse intervals are only approximations of ECG-derived RR intervals.
+
+\section{Hardware Design}
+\subsection{Overall Architecture}
+The hardware consists of four modules: a MAX30102 optical sensor, an Arduino acquisition and processing node, a USB serial communication link, and a host computer. The MAX30102 integrates red/infrared LEDs, optical detection, analog-to-digital conversion, and FIFO buffering. The Arduino communicates with the sensor through I2C, reads infrared samples, performs pulse detection and preliminary feature calculation, and sends structured text frames through serial communication. The host computer parses incoming frames and updates waveform and indicator displays.
+
+\subsection{MAX30102 Sensor Module}
+The MAX30102 is suitable for compact PPG acquisition because it integrates LED drivers, a photodetector front end, ADC, and FIFO storage. Sampling rate, LED current, and pulse width can be configured for different contact conditions. In this prototype, the infrared channel is used as the main source for HR, HRV, and PI calculation. The raw IR value is also used for finger-contact detection. Very low values may indicate missing contact or weak reflection, while overly high values may indicate saturation, excessive pressure, or abnormal placement.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.95\columnwidth]{fig2_wiring_overview}
+\caption{Simplified wiring overview of the prototype. The finger-clip optical sensor is connected to the Arduino Uno through VCC, GND, SDA, and SCL lines, while the Arduino communicates with the host computer through a USB cable for data transmission and power supply.}
+\label{fig:hardware-setup}
+\end{figure}
+
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.95\columnwidth]{fig3_ppg_principle}
+\caption{PPG optical sensing principle. Red and infrared light emitted by the MAX30102 sensor interacts with fingertip tissue and blood vessels, and the reflected optical signal is detected by the photodetector. Periodic blood-volume variation produces the AC component of the PPG waveform, while the baseline intensity corresponds to the DC component used in PI estimation.}
+\label{fig:ppg-principle}
+\end{figure}
+
+\subsection{Electrical Interface and Sampling Considerations}
+The MAX30102 communicates with Arduino through the I2C bus. This interface is sufficient for the prototype because the target reporting rate is low compared with the available bus bandwidth. The embedded node reads samples from the sensor buffer and updates the signal-processing state continuously. In a practical implementation, the sampling rate should be high enough to preserve pulse morphology and detect peaks reliably, but not so high that the microcontroller becomes overloaded by unnecessary data transfer.
+
+The LED current and pulse width determine the optical signal strength and power consumption. If the LED current is too low, the waveform amplitude may be insufficient for stable peak detection. If the current is too high, the signal may saturate or cause unnecessary heating and power drain. Therefore, the prototype uses empirical tuning and signal-quality feedback to choose a usable operating range. The raw IR value is monitored continuously so that missing-finger, weak-contact, and saturation-like conditions can be detected before numerical features are trusted.
+
+\subsection{Mechanical and Human-Factor Requirements}
+Although the electronic circuit is simple, the mechanical interface is critical. PPG is sensitive to tiny changes in contact pressure. A clip that is too loose produces motion artifacts and weak reflection, while a clip that is too tight can reduce local blood flow and distort PI. The mechanical design should therefore balance stability, comfort, and repeatability. A soft contact surface can reduce discomfort, and a fixed sensor position can reduce alignment variability across trials.
+
+For classroom use, the structure should also be easy to assemble and inspect. Users should be able to see where to place the finger, how to avoid pulling the cable, and how long they should remain still before reading the result. These considerations are important because many apparent algorithmic failures in PPG systems actually originate from poor mechanical contact or ambiguous user operation.
+
+\section{Software Design}
+\subsection{Processing Pipeline}
+The software separates time-sensitive embedded processing from host-side visualization. The Arduino reads IR data, detects pulse peaks, calculates pulse-to-pulse intervals, estimates instantaneous BPM, updates average BPM, maintains an HRV buffer, and computes PI. The host interface reads serial data, parses key-value frames, stores recent values in buffers, plots the waveform, displays numerical indicators, and updates signal-quality and HRV feedback.
+
+\subsection{Heart-Rate Estimation}
+Heart rate is calculated from adjacent valid pulse peaks. If two consecutive valid peaks occur at $t_{i-1}$ and $t_i$, the pulse interval is
+\begin{equation}
+RR_i=t_i-t_{i-1},
+\end{equation}
+and the instantaneous heart rate is
+\begin{equation}
+BPM_i=\frac{60}{RR_i},
+\end{equation}
+where $RR_i$ is measured in seconds. Instantaneous BPM responds quickly but is sensitive to peak-detection errors. Therefore, the system also calculates an average BPM over recent valid samples.
+
+To improve reliability, RR/PPI values are filtered by range and jump constraints. In the prototype, intervals around 450--1400 ms are treated as valid candidates, and adjacent RR jumps larger than approximately 220 ms are rejected as likely artifacts. These rules reduce false peaks and motion-induced errors before HRV calculation.
+
+\subsection{HRV and PI Calculation}
+The project uses RMSSD as the short-term HRV metric:
+\begin{equation}
+RMSSD=\sqrt{\frac{1}{n-1}\sum_{i=1}^{n-1}(RR_{i+1}-RR_i)^2}.
+\end{equation}
+Initial beats are used for stabilization, and HRV is calculated only after enough valid intervals have been collected. Extremely large RMSSD values are treated as abnormal and trigger re-collection, because motion artifacts can produce unrealistically high variability.
+
+The perfusion index is calculated as
+\begin{equation}
+PI=\frac{AC}{DC}\times100\%,
+\end{equation}
+where $AC$ is the pulsatile component of the PPG waveform and $DC$ is the baseline component. Low PI usually indicates weak pulsatile signal, poor finger contact, cold fingers, weak peripheral perfusion, or sensor misalignment. Therefore, PI is used not only as a physiological reference but also as a quality-control feature.
+
+\subsection{Signal-Quality State Machine}
+
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.90\textwidth]{fig4_processing_pipeline}
+\caption{Signal-processing and software pipeline. Raw infrared samples are checked for finger contact, followed by peak detection, RR/PPI interval estimation, interval filtering, HR and average BPM calculation, HRV buffering, PI estimation, signal-quality state determination, serial-frame formatting, and host-side GUI feedback.}
+\label{fig:processing-pipeline}
+\end{figure*}
+
+\subsection{Serial Communication Protocol}
+The communication protocol uses a key-value text frame. A typical frame may include fields such as raw infrared value, instantaneous BPM, average BPM, RR or PPI, HRV, PI, and quality state. A text format is less compact than a binary protocol, but it is more transparent during development. Developers can observe the data stream directly using a serial terminal and identify parsing errors, missing fields, or abnormal numerical values without specialized tools.
+
+The limitation of a text protocol is that it does not inherently provide frame validation. In long-term use, dropped characters or partial frames may cause parsing errors. For future development, a sequence number, checksum, and explicit start/end markers can be added. However, for the current prototype, readability and ease of debugging are prioritized because the system is mainly used for educational demonstration and short experimental trials.
+
+\subsection{Host Interface Design}
+The host interface is designed around three layers of information. The first layer is the waveform layer, which shows the recent PPG signal and allows users to visually inspect whether the waveform is periodic. The second layer is the numerical layer, which displays HR, average BPM, RR/PPI, HRV, and PI. The third layer is the interpretation layer, which converts signal-quality status and HRV range into color, text, and simple feedback. This layered design helps users understand both the measurement and its reliability.
+
+Real-time plotting requires buffering. The host program stores recent samples in bounded queues so that the display can update smoothly without consuming unbounded memory. The refresh interval should be short enough to make the system feel responsive, but long enough to avoid excessive CPU usage. In the prototype, the display refresh rate is chosen to provide visible waveform movement while maintaining stable operation on a standard laptop.
+
+\subsection{Algorithm Robustness Considerations}
+The system uses simple rule-based processing rather than complex machine learning. This choice is intentional. In a course prototype, transparent rules are easier to explain, tune, and debug. Range checks, jump rejection, PI thresholds, and quality-state transitions can be inspected directly. If the system reports Motion, the developer can trace the decision to RR instability. If it reports Weak Signal, the decision can be traced to low amplitude or low PI.
+
+More advanced filtering can be added in future work. A band-pass filter could suppress slow baseline drift and high-frequency noise. An adaptive threshold could adjust peak detection to different users and contact conditions. A peak-confidence score could combine waveform slope, amplitude, and interval consistency. However, even with simple rules, the current prototype demonstrates the key principle that physiological features should not be computed blindly from low-quality signals.
+
+\section{Algorithm Design}
+\subsection{Peak Detection Strategy}
+The peak detector operates on the infrared PPG stream. A candidate pulse is accepted only when the waveform shape and timing are plausible. The algorithm must avoid two common errors: missing true beats and accepting noise as beats. Missing beats can produce unrealistically long intervals, while false beats can produce unrealistically short intervals. Both cases are harmful for HRV.
+
+The detector therefore combines local waveform behavior with interval constraints. A detected peak first produces a candidate interval. The interval is compared with the accepted physiological range. If it passes the range check, it is then compared with the previous accepted interval to detect sudden jumps. This two-stage logic is simple but effective for a course-level prototype.
+
+\subsection{Quality-Gated Feature Extraction}
+The system uses quality-gated feature extraction. HR can be updated when a recent valid interval exists, but HRV requires a stronger condition: a sequence of stable intervals and an acceptable signal-quality state. This is because HR is relatively tolerant to occasional noise, while HRV is extremely sensitive to outliers. PI is computed continuously, but its interpretation depends on contact state and waveform stability.
+
+This logic can be summarized as follows. First, raw IR values are checked for contact validity. Second, peak detection is performed only when contact is plausible. Third, candidate intervals are filtered by range and jump constraints. Fourth, HR and average HR are updated from valid intervals. Fifth, HRV is calculated only after enough accepted intervals are accumulated. Sixth, the quality state determines whether feedback is displayed or withheld.
+
+\subsection{State Transition Logic}
+The four-state machine is designed for interpretability rather than mathematical complexity. The system begins in Checking. If the signal amplitude and PI remain low, it moves to Weak Signal. If RR intervals show sudden jumps, it moves to Motion. If amplitude, PI, and RR stability are acceptable for a sufficient period, it enters Good. From Good, the system can return to Checking or Motion when conditions change.
+
+The state machine also supports user guidance. Weak Signal suggests repositioning the finger or improving contact. Motion suggests keeping still. Checking tells the user to wait while the system collects stable intervals. Good indicates that numerical feedback is more trustworthy. Such guidance is important because users often do not know whether an abnormal value comes from their physiology or from poor measurement conditions.
+
+\subsection{Computational Complexity}
+The algorithm is lightweight. Each new sample requires only basic comparisons, buffer updates, and simple arithmetic. No large matrix operation or trained model is required. This is suitable for Arduino-class microcontrollers and leaves enough computation time for serial communication. The host interface performs plotting and string parsing, which are also lightweight for a standard laptop.
+
+\begin{table}[t]
+\centering
+\caption{Algorithm Modules and Responsibilities}
+\label{tab:modules}
+\begin{tabular}{p{2.1cm}p{2.5cm}p{2.7cm}}
+\toprule
+\textbf{Module} & \textbf{Input} & \textbf{Output} \\
+\midrule
+Contact check & Raw IR value & Valid or invalid contact \\
+Peak detector & PPG waveform & Candidate beat events \\
+Interval filter & Candidate RR/PPI & Accepted intervals \\
+Feature calculator & Accepted intervals, waveform window & HR, average HR, HRV, PI \\
+Quality machine & PI, amplitude, RR stability & Checking, Weak Signal, Motion, Good \\
+Host interface & Key-value serial frames & Waveform, numbers, feedback \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Experimental Method}
+The experimental setup includes an Arduino board, a MAX30102 sensor module, a USB serial cable, a finger-clip or press-based fixture, and a computer running the Python interface. The serial baud rate is set to 115200 bps. The lower-level node reports key data at approximately 10 Hz, while the host interface reads serial data about every 50 ms and refreshes the display about every 0.12 s.
+
+The experiment follows these steps. First, connect MAX30102 to Arduino and verify I2C initialization. Second, launch the host interface and select the correct serial port. Third, place or clip the finger on the sensor and wait until the IR value enters a valid range. Fourth, observe whether the waveform becomes periodic and whether the quality state changes from Checking to Good. Fifth, record HR, average BPM, RR, HRV, PI, and quality state. Finally, introduce mild motion or contact changes to verify whether the system enters Motion or Weak Signal and recovers after stable contact resumes.
+
+
+Three representative test conditions are considered. The first condition is stable contact, in which the finger is placed normally and kept still. This condition is expected to produce periodic waveforms and reliable intervals. The second condition is weak contact, in which the finger is slightly misaligned or lightly touching the sensor. This condition tests whether PI and waveform amplitude can detect insufficient optical coupling. The third condition is motion disturbance, in which the finger is moved slightly or pressure is changed. This condition tests whether RR jump rejection and the Motion state can prevent unreliable HRV output.
+
+For each condition, the operator observes both numerical indicators and the waveform. A reliable trial should not be judged by HR alone. Instead, the waveform should be periodic, PI should be within a reasonable range, RR intervals should be consistent, and the quality state should be Good. When these conditions are not satisfied, HRV should either be withheld or marked as unreliable. This evaluation strategy reflects the central design goal of the system: reliable interpretation is more important than continuous numerical output.
+
+The prototype does not attempt to establish clinical accuracy. A rigorous clinical evaluation would require synchronized ECG or medical pulse oximeter reference data, multiple subjects, controlled posture, controlled temperature, and statistical analysis of measurement error. The current evaluation instead focuses on engineering validity: whether the system can acquire data, extract features, detect obvious artifacts, and provide interpretable feedback.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.95\textwidth]{fig5_experimental_conditions}
+\caption{Experimental setup and representative test conditions. Four practical measurement conditions are considered: stable contact, weak contact, motion disturbance, and recovery after disturbance. These conditions are used to verify waveform stability, PI variation, RR/PPI consistency, and signal-quality state transitions.}
+\label{fig:experimental-setup}
+\end{figure*}
+
+\begin{table}[t]
+\centering
+\caption{Data Processing and Quality-Control Rules}
+\label{tab:rules}
+\begin{tabular}{p{2.0cm}p{2.7cm}p{2.6cm}}
+\toprule
+\textbf{Item} & \textbf{Rule} & \textbf{Function} \\
+\midrule
+Finger contact & IR value in empirical valid range & Reject missing or saturated contact \\
+RR range & About 450--1400 ms & Remove unreasonable intervals \\
+RR jump & Adjacent jump below about 220 ms & Reduce motion and false peaks \\
+HRV buffer & Several valid RR intervals & Ensure sample support \\
+Abnormal HRV & Very large RMSSD triggers reset & Avoid artifact-based feedback \\
+Quality state & PI, amplitude, RR stability & Control output reliability \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Implementation Details}
+\subsection{Embedded Processing Logic}
+The embedded logic follows an event-driven structure. Each incoming IR sample updates the waveform buffer and finger-contact status. When a peak is detected, the timestamp is compared with the previous valid peak. If the interval falls within the accepted RR/PPI range, it is stored for HR and HRV calculation. If the interval is outside the range or differs too much from the previous interval, it is rejected. This design ensures that isolated false peaks do not immediately corrupt the HRV buffer.
+
+The embedded node calculates instantaneous BPM from the most recent valid interval and average BPM from a small set of recent values. This combination is useful because instantaneous BPM reflects rapid change, while average BPM offers a smoother and more readable display. The HRV buffer is updated more conservatively than the HR display because HRV is more sensitive to outliers.
+
+\subsection{PI Estimation Logic}
+PI is estimated from a recent PPG window. The AC component is approximated by the pulsatile variation of the waveform, while the DC component is approximated by the baseline level. This calculation is simple but useful for identifying weak waveform conditions. If the AC component is too small relative to DC, the waveform may not support reliable peak detection even if occasional peaks are detected by the algorithm.
+
+PI should not be interpreted as an absolute clinical measurement in this prototype. Its main role is to support relative assessment of signal strength and contact quality. For example, if PI decreases while the waveform becomes flat, the user can adjust finger position or pressure before trusting HRV feedback.
+
+\subsection{User Feedback Logic}
+The interface converts HRV and signal-quality information into user-facing feedback. When the quality state is not Good, the interface prioritizes guidance such as keeping still or adjusting finger placement. When the quality state is Good and enough intervals have been collected, the interface can display HRV-level feedback. This design avoids the common problem of showing an HRV value under poor signal conditions.
+
+\section{Evaluation Protocol}
+\subsection{System-Level Evaluation}
+System-level evaluation focuses on whether the prototype works as a complete sensing pipeline. The main indicators include successful sensor initialization, stable serial data reception, waveform refresh smoothness, user-interface responsiveness, and quality-state correctness. These measurements are important because a physiological prototype is only useful when acquisition, processing, communication, and visualization work together.
+
+The system should be tested over repeated sessions. In each session, the operator reconnects the sensor, starts the host program, places the finger, and records whether the system reaches Good state within a reasonable time. Repeated testing helps reveal fragile assumptions in sensor placement, serial parsing, and threshold tuning.
+
+\subsection{Signal-Level Evaluation}
+Signal-level evaluation examines waveform quality and interval consistency. Under stable contact, the waveform should show recognizable periodic pulses. The baseline should not saturate, and the amplitude should be large enough for peak detection. RR/PPI intervals should vary smoothly rather than jumping abruptly. When the contact is intentionally weakened, the amplitude and PI should decrease. When the finger is moved, the RR sequence should become unstable and the Motion state should be triggered.
+
+This evaluation is qualitative in the current prototype, but it can be made quantitative in future work. Possible quantitative metrics include peak-detection rate, percentage of accepted intervals, number of resets per minute, time to Good state, and disagreement between PPG-based pulse intervals and ECG reference intervals.
+
+\subsection{User-Interface Evaluation}
+The user interface should be evaluated not only by visual appearance but also by whether it supports correct interpretation. A useful interface should answer three questions: Is a waveform being received? Are the numerical indicators updated? Can the user tell whether the current measurement is reliable? The quality-state display is therefore as important as the HR and HRV values.
+
+During informal testing, users can be asked to respond to interface prompts. If Weak Signal is displayed, the user should understand that finger placement should be adjusted. If Motion is displayed, the user should understand that they should keep still. If Good is displayed, the user can interpret HRV feedback with greater confidence. This type of evaluation is important because the system is intended for educational and demonstration scenarios.
+
+\subsection{Comparison Conditions}
+The prototype can be evaluated under four comparison conditions: stable contact, weak contact, motion disturbance, and recovery after disturbance. Stable contact tests the normal operating path. Weak contact tests sensitivity to low signal strength. Motion disturbance tests interval filtering and state transition. Recovery tests whether the system can return to stable measurement after an artifact. These four conditions cover the most common practical failures of finger-based PPG measurement.
+
+\section{Results and Analysis}
+Under stable finger contact, the PPG waveform shows periodic peaks, RR intervals remain relatively consistent, HR and average BPM are close, and the quality state gradually becomes Good. When finger contact is loose or misaligned, waveform amplitude and PI decrease, and the system reports Weak Signal. When the finger moves or contact pressure changes suddenly, RR jumps become larger, pulse detection becomes unreliable, and the system reports Motion. After stable contact is restored, the system re-collects RR intervals before outputting HRV feedback again.
+
+The prototype demonstrates a complete PPG monitoring loop. MAX30102 acquires optical signals, Arduino performs embedded feature extraction and serial reporting, and the Python interface displays waveform and indicators in real time. The combination of HR, HRV, and PI is more informative than HR alone. HR indicates current rhythm, HRV describes short-term interval variation, and PI helps determine whether the waveform is strong enough for reliable interpretation.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.90\textwidth]{fig6_monitoring_results}
+\caption{Representative real-time monitoring results under stable contact. The host-computer interface displays the current BPM, average BPM, PI, RR/PPI interval, valid RR count, and quality state. The enlarged PPG waveform shows stable periodic pulse peaks, while the heart-rate trend confirms that the instantaneous BPM fluctuates slightly around the averaged BPM during reliable measurement.}
+\label{fig:waveform-comparison}
+\end{figure*}
+
+The main limitation is that PPG-based PPI is not identical to ECG-based RR interval. Thus, HRV output should be used for short-term trends and interaction feedback rather than clinical diagnosis. The current serial protocol also lacks CRC and frame sequence numbers, which may affect long-term robustness. In addition, the thresholds are empirically selected and should be calibrated using larger user samples if the system is extended beyond course demonstration.
+
+\section{Discussion}
+\subsection{Educational Value}
+The prototype is particularly suitable for teaching because it connects multiple layers of a sensing system. Students can observe how a physical signal is generated, how optical intensity becomes a digital waveform, how embedded software detects events, how serial communication transfers data, and how a graphical interface converts numerical values into interpretation. The project also demonstrates that sensor systems are not only about measurement, but also about reliability, user guidance, and responsible interpretation.
+
+\subsection{Comparison with Single-Value Monitors}
+Many simple heart-rate prototypes display only BPM. This project shows why a single value is often insufficient. A BPM value can appear plausible even when the waveform is noisy or contact is unstable. By displaying waveform, PI, HRV, and signal-quality state together, the system provides a more complete view of measurement conditions. This is important for both engineering debugging and user trust.
+
+\subsection{Scalability}
+The architecture can be extended in several directions. First, red and infrared channels can be jointly used to improve quality assessment and potentially estimate oxygen saturation. Second, the serial protocol can be replaced with a more robust packet format. Third, a mobile interface can be developed for portable use. Fourth, data logging can be added to support long-term trend analysis. Finally, a reference measurement such as ECG can be introduced for quantitative validation.
+
+\subsection{Safety and Ethics}
+Because the system produces health-related indicators, clear limitations must be communicated. Users should understand that the device is a prototype and that HRV feedback is not a diagnosis. The interface should avoid alarming language and should encourage users to repeat measurements under stable conditions when signal quality is poor. If future versions store user data, privacy protection and informed consent should be considered.
+
+\section{Conclusion}
+This project implements a finger-clip peripheral circulation monitoring system based on MAX30102 PPG sensing. The system estimates HR, short-term HRV, and PI, and visualizes waveform and signal-quality states through a Python host interface. By adding finger-contact checks, RR filtering, interval-jump rejection, PI/amplitude assessment, and a quality-state machine, the prototype improves the reliability and interpretability of PPG-based monitoring. Future work will optimize the finger-clip structure, add stronger filtering and adaptive thresholds, incorporate red/infrared dual-channel quality analysis, improve serial-frame robustness with CRC and sequence numbers, and compare the prototype with ECG or medical pulse oximeter references.
+
+\section{Data Management and Reproducibility}
+\subsection{Data Frame Organization}
+Although the current prototype uses a simple serial text protocol, the data should be organized in a reproducible structure. Each frame should include a timestamp, raw infrared value, detected beat flag, instantaneous BPM, average BPM, RR/PPI value, HRV value, PI value, and signal-quality state. Keeping both raw and processed fields is important because processed indicators alone are not sufficient for debugging. If an HRV value appears abnormal, the raw waveform and interval sequence are needed to determine whether the cause is physiology, contact quality, or algorithm error.
+
+For future experiments, the host interface can save frames to comma-separated value files. Each trial should also include metadata such as subject identifier, test condition, sensor placement, clip type, sampling configuration, and operator notes. This metadata makes it possible to compare stable contact, weak contact, and motion disturbance trials across sessions. Without metadata, waveform recordings are difficult to interpret after collection.
+
+\subsection{Reproducibility Requirements}
+Reproducibility is a key requirement for a teaching prototype. The hardware wiring should be documented clearly, including sensor power, ground, I2C clock, and I2C data connections. The sensor configuration should record LED current, sampling rate, pulse width, and averaging settings. The Arduino firmware and host software should use consistent field names in the serial protocol. If field names change without documentation, the host parser may fail silently or display incorrect values.
+
+The user procedure should also be standardized. A trial should specify how long the user waits before recording, how the finger is placed, whether the hand is resting on a table, and when motion disturbance is introduced. Standardizing these steps reduces variability and helps students distinguish between sensor noise, algorithm behavior, and real physiological variation.
+
+\subsection{Failure Modes}
+The most common failure modes are missing contact, saturated signal, weak pulsation, motion artifacts, serial disconnection, and parser mismatch. Missing contact usually produces very low raw IR values. Saturation or excessive pressure may produce unusually high baseline values and distorted waveform shape. Weak pulsation produces low AC amplitude and low PI. Motion artifacts produce abrupt interval changes and irregular waveform peaks. Serial disconnection results in frozen display values, while parser mismatch may cause missing fields.
+
+A robust interface should expose these failure modes clearly. Instead of leaving the user with a blank or misleading value, the interface should report the most likely condition and suggest an action. For example, weak signal feedback should suggest adjusting finger placement, while motion feedback should suggest keeping still. Such feedback improves both user experience and engineering debugging.
+
+
+\section{Design Requirements for Final Figures}
+The final version of the paper should replace the placeholders with consistent IEEE-style figures. All figures should use the same visual language: black or dark gray lines, limited accent colors, readable labels, and minimal decoration. For block diagrams, arrows should show signal or data flow from left to right. For waveform figures, axes should be labeled clearly, and annotations should point to peaks, intervals, PI-related amplitude, and quality-state changes.
+
+Fig.~\ref{fig:system-architecture} should be a wide system architecture diagram. It should show five layers: fingertip and optical sensing, MAX30102 acquisition, Arduino feature extraction, serial communication, and Python GUI feedback. This figure is suitable for the introduction because it summarizes the entire project at a glance.
+
+Fig.~\ref{fig:hardware-setup} should show either an annotated real photo or a clean schematic of the physical prototype. The most important elements are the finger clip, MAX30102 board, Arduino board, USB cable, and host computer. If a real photo is used, labels should be added so that the figure remains understandable when printed in grayscale.
+
+Fig.~\ref{fig:ppg-principle} should explain the optical mechanism of PPG. It should include an LED, fingertip tissue, a photodetector, and a sample waveform with AC and DC components. This figure should visually connect the physical sensing process to the PI equation used later in the paper.
+
+Fig.~\ref{fig:processing-pipeline} should be a wide flowchart covering the complete algorithm. It should include raw IR sampling, contact validation, peak detection, RR/PPI filtering, HR calculation, HRV buffer update, PI estimation, quality-state decision, serial frame formatting, and GUI display. This figure is the most important software figure.
+
+Fig.~\ref{fig:experimental-setup} should show the four experimental conditions: stable contact, weak contact, motion disturbance, and recovery. This can be drawn as a sequence diagram or as four small panels. The purpose is to make the evaluation protocol reproducible.
+
+Fig.~\ref{fig:waveform-comparison} should compare representative waveforms across quality states. The Good waveform should be periodic with clear peaks. The Weak Signal waveform should have low amplitude and low PI. The Motion waveform should show irregular peaks and unstable intervals. Annotating these differences will make the signal-quality logic easier to understand.
+
+\section{Implementation Checklist}
+A reproducible implementation should include both hardware and software checklists. The hardware checklist should verify sensor power, I2C wiring, board recognition, LED activation, finger placement, cable stability, and ambient-light shielding. The software checklist should verify serial-port selection, field parsing, waveform buffering, numerical display updates, quality-state updates, and data logging.
+
+Before collecting data, the operator should confirm that the raw IR value changes when a finger is placed on the sensor. The operator should then verify that the waveform becomes periodic under stable contact. If no waveform appears, the likely causes are wiring error, wrong serial port, sensor initialization failure, or incorrect sampling configuration. If a waveform appears but HRV is unavailable, the likely causes are insufficient stable intervals, low PI, or unstable RR sequence.
+
+During testing, each trial should be marked with a condition label. At minimum, the labels should include Stable, Weak Contact, Motion, and Recovery. These labels can later be used to compare waveform patterns and validate the quality-state machine. If the data are saved, the file name should include date, condition, and trial number. This simple convention makes later analysis much easier.
+
+\section{Extended Discussion}
+\subsection{Why Quality Control Matters}
+Quality control is central to this project because PPG features are highly context dependent. A low-cost sensor can easily produce numerical values even when the signal is unreliable. Without quality control, the interface may display HRV values that are mathematically computed but physiologically meaningless. The proposed system avoids this by treating signal quality as a gate before interpretation.
+
+The four-state feedback design also improves user learning. When the interface shows Weak Signal, users can connect the message to finger placement. When it shows Motion, users can connect the message to movement. This helps users understand that physiological sensing is an interaction between body, sensor, algorithm, and interface.
+
+\subsection{Potential Quantitative Extensions}
+Although the current paper mainly describes prototype behavior, future versions can include quantitative analysis. Possible metrics include time to Good state, percentage of accepted RR intervals, number of rejected intervals per minute, HR error compared with a reference sensor, RMSSD difference compared with ECG, PI stability across repeated placements, and recovery time after disturbance.
+
+A useful experiment would compare three configurations: HR-only display, HR plus waveform display, and HR/HRV/PI plus quality-state display. User interpretation accuracy could then be measured. Such an experiment would test whether the added quality-state feedback actually improves user understanding and reduces misinterpretation.
+
+\subsection{Limitations of Placeholder Figures}
+The current placeholders indicate intended figure positions and dimensions, but they do not replace real experimental evidence. The final paper should include actual waveform plots and hardware images whenever possible. If real images are unavailable, schematic diagrams should still be technically faithful: they should not imply hardware components or algorithms that are not implemented.
+
+\section{Detailed Figure Placement Plan}
+\subsection{Architecture Figure}
+The architecture figure should be placed near the end of the Introduction because it provides a map for the rest of the paper. It should present the system as a pipeline rather than as isolated parts. The left side should show the finger and optical sensing module, the center should show Arduino-based processing and serial communication, and the right side should show the host interface and feedback indicators. The figure should also show that quality state is not an optional output but part of the main feedback loop.
+
+A strong architecture figure helps readers understand why the paper discusses both hardware and software. Without such a figure, the relationship between MAX30102, Arduino, Python visualization, and HRV/PI feedback may appear fragmented. The final image should therefore use consistent arrows and grouped blocks. Suggested dimensions are 0.92 textwidth by 5.0 cm.
+
+\subsection{Hardware and Optical Principle Figures}
+The hardware figure should show the real or conceptual physical arrangement. If a photo is available, it should be annotated with labels for MAX30102, Arduino, USB cable, finger clip, and host computer. If no photo is available, a schematic is acceptable. The key requirement is that a reader can reproduce the wiring and understand how the finger is positioned relative to the optical module.
+
+The optical principle figure should be more conceptual. It should show light emission, tissue interaction, photodetection, and waveform generation. It should also mark AC and DC components because these are directly related to the PI calculation. A small waveform inset with labeled peaks and baseline would make the connection between sensing physics and signal processing clear.
+
+\subsection{Processing and State Figures}
+The processing pipeline figure should be the most detailed diagram. It should show that raw IR samples are not directly converted into HRV. Instead, they pass through contact validation, peak detection, interval filtering, HR calculation, HRV buffering, PI estimation, and quality-state gating. The quality-state module should receive PI, amplitude, and RR stability as inputs and should control whether feedback is displayed.
+
+For the quality-state comparison figure, three waveform panels are recommended. The Good panel should show periodic peaks and stable RR intervals. The Weak Signal panel should show low amplitude and low PI. The Motion panel should show distorted peaks and irregular intervals. This figure is valuable because it visually demonstrates the practical difference between valid physiological variation and measurement artifact.
+
+\section{Additional Experimental Scenarios}
+\subsection{Stable Resting Measurement}
+A stable resting measurement is the baseline scenario. The user places a finger on the clip, rests the hand on a table, and remains still. Under this condition, the waveform should become periodic after a short stabilization period. HR should be stable, average BPM should converge smoothly, and the quality state should become Good. HRV feedback should be displayed only after enough valid intervals are collected.
+
+This scenario verifies the normal operating path of the system. It also provides a reference waveform for comparison with weak-contact and motion trials. If the system cannot reach Good state under stable resting conditions, the likely causes are poor mechanical contact, incorrect LED current, inappropriate threshold settings, or a software parsing problem.
+
+\subsection{Contact Pressure Variation}
+Contact pressure variation is important because PPG is strongly affected by the mechanical interface. If pressure is too low, the signal may become weak and noisy. If pressure is too high, local blood flow may be restricted, and the waveform may be distorted. A good prototype should help the user find a middle range where the sensor is stable but not overly compressed.
+
+This experiment can be performed by asking the user to gradually change finger pressure while observing waveform amplitude and PI. The expected result is that PI and waveform morphology change with pressure. The system should avoid interpreting these changes as purely physiological events. Instead, it should use quality-state feedback to indicate when contact quality is poor.
+
+\subsection{Motion Disturbance and Recovery}
+Motion disturbance tests whether the system can reject unreliable intervals. The user can intentionally move the finger slightly, tap the sensor, or change hand posture. These actions typically create irregular peaks and abrupt interval jumps. The system should detect this instability and enter the Motion state. HRV should not be updated from these intervals.
+
+Recovery is equally important. After motion stops, the system should not immediately trust the first detected interval. It should return to Checking, collect several stable intervals, and then move to Good. This behavior prevents a single post-motion artifact from contaminating HRV feedback.
+
+\section{Expected Result Figures}
+\subsection{Waveform Annotation}
+The waveform result figure should include annotated peaks and intervals. A clean version should show a stable waveform segment with peak markers and RR/PPI labels. This figure can be generated from saved serial data or simulated from a representative PPG-like signal. The figure should use a simple line plot, black waveform line, small circular peak markers, and arrows or brackets for intervals.
+
+If actual data are not available, a synthetic waveform can be used as a placeholder, but the caption should state that it is illustrative. When actual data become available, the synthetic plot should be replaced. The most informative version would show raw waveform, accepted peaks, rejected candidate peaks, and quality state over time.
+
+\subsection{Indicator Trend Plot}
+A second result figure can show trends of HR, HRV, and PI over time. The x-axis should be time, and the y-axis can be split into stacked panels. The top panel can show BPM, the middle panel can show RMSSD or HRV level, and the bottom panel can show PI. Colored background regions can mark Good, Weak Signal, and Motion states. This figure would make the relationship between signal quality and numerical indicators easier to understand.
+
+\subsection{State Transition Visualization}
+A final optional figure can show the state transition machine. It should contain four nodes: Checking, Good, Weak Signal, and Motion. Arrows should be labeled with conditions such as stable RR, low PI, small amplitude, and RR jump. This figure is useful for explaining the interface behavior and can be drawn as a clean vector diagram.
+
+\section{Practical Deployment Notes}
+\subsection{Calibration Procedure}
+Before deployment, the sensor should be calibrated for the expected environment. The operator should record raw IR values with no finger, with stable finger placement, with weak contact, and with excessive pressure. These observations can guide the empirical contact threshold. The operator should also inspect waveform amplitude and PI under each condition. Calibration should be repeated if the clip structure, sensor board, or LED current changes.
+
+A short calibration workflow can be included in the host software. The interface can ask the user to remove the finger, place the finger normally, and remain still for several seconds. It can then estimate baseline ranges for contact detection and signal-quality thresholds. This would make the system more robust across users and hardware units.
+
+\subsection{Data Logging for Future Validation}
+Data logging is necessary for future validation. Each saved trial should include raw IR waveform, accepted peaks, rejected intervals, HR, average HR, HRV, PI, quality state, and timestamps. The file should also include metadata such as user ID, condition, sensor settings, and trial notes. With these logs, the system can later be compared against ECG or pulse oximeter references.
+
+A useful dataset would include both successful and failed measurements. Failed measurements are valuable because they help improve quality detection. For example, examples of weak signal, motion artifact, saturation, and serial parsing failure can be used to refine thresholds and train students to recognize common PPG problems.
+
+
+\section{Detailed Experimental Matrix}
+\subsection{Independent Variables}
+A more systematic evaluation can be designed around several independent variables. The first variable is contact condition, including normal placement, loose contact, excessive pressure, and partial finger offset. The second variable is motion level, including no motion, slight finger motion, cable pulling, and hand posture change. The third variable is environment, including normal indoor light, stronger ambient light, and partially shielded sensing. The fourth variable is sensor configuration, including LED current, sampling rate, and averaging settings.
+
+By varying one factor at a time, the operator can observe which factor most strongly affects waveform stability, PI, and RR consistency. This matrix is useful because many failures in PPG systems appear similar in the final numerical output but have different physical causes. For example, weak contact and cold fingers may both reduce pulsatile amplitude, while motion and false peak detection may both distort HRV.
+
+\subsection{Dependent Variables}
+The dependent variables include waveform amplitude, baseline level, PI, accepted RR ratio, rejected interval count, time to Good state, HR stability, HRV availability, and recovery time after disturbance. These variables describe different layers of system performance. Waveform amplitude and baseline level describe sensing quality. Accepted RR ratio and rejected interval count describe algorithmic filtering. Time to Good state and recovery time describe user experience.
+
+A complete evaluation should not rely on one metric. A system that reports HR quickly but accepts many false intervals is not reliable. A system that rejects too many intervals may be safe but frustrating to use. Therefore, the goal is to balance responsiveness and reliability.
+
+\subsection{Reporting Format}
+Experimental results should be reported using both tables and figures. A table can summarize the expected behavior under each condition. Figures can show representative waveforms and trend curves. For IEEE format, a compact table with conditions, expected quality state, and observed behavior is appropriate. Waveform figures should be placed near the Results section so that readers can visually connect the signal patterns with the state-machine logic.
+
+\begin{table}[t]
+\centering
+\caption{Suggested Experimental Matrix for Future Validation}
+\label{tab:matrix}
+\begin{tabular}{p{1.9cm}p{2.2cm}p{3.0cm}}
+\toprule
+\textbf{Condition} & \textbf{Expected State} & \textbf{Key Observation} \\
+\midrule
+Stable contact & Good & Periodic waveform and stable RR \\
+Loose contact & Weak Signal & Low amplitude and reduced PI \\
+Finger motion & Motion & Irregular peaks and RR jumps \\
+Recovery & Checking to Good & Recollection before HRV output \\
+High pressure & Weak or distorted & Baseline shift and possible PI change \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Design Alternatives}
+\subsection{Binary Protocol Versus Text Protocol}
+The current prototype uses a text protocol because readability is valuable during development. However, a binary protocol would be more efficient and less ambiguous. A binary frame could include a fixed header, payload length, timestamp, numerical fields, quality-state code, checksum, and end marker. This would reduce parsing errors and make the system more suitable for long-duration recording.
+
+The trade-off is complexity. Students can debug text frames using a serial monitor, while binary frames require custom tools. For a teaching prototype, text frames are appropriate. For a robust wearable or research platform, binary frames would be preferable.
+
+\subsection{Rule-Based Processing Versus Learning-Based Processing}
+The current algorithm is rule-based. Its advantage is interpretability: each decision can be traced to a threshold or condition. A learning-based classifier could potentially detect signal quality more accurately if trained on enough labeled data. For example, a classifier could distinguish Good, Weak Signal, and Motion using waveform statistics, frequency-domain features, and interval variability.
+
+However, learning-based methods require a dataset, labels, and validation. Without these, they may overfit or behave unpredictably. Therefore, the current system uses rule-based processing as a reliable baseline. Future work can compare rule-based and learning-based quality assessment after sufficient data are collected.
+
+\subsection{Single-Channel Versus Dual-Channel Sensing}
+The prototype mainly uses the infrared channel. This simplifies implementation and is sufficient for HR and HRV demonstration. A dual-channel design using both red and infrared signals could improve quality assessment and support additional physiological indicators. It could also help detect whether changes are caused by optical contact or real physiological variation.
+
+The cost of dual-channel processing is additional calibration and more complex interpretation. Red and infrared channels may respond differently to contact pressure and tissue properties. A future system should therefore compare single-channel and dual-channel reliability systematically rather than assuming that more channels automatically improve performance.
+
+\section{Paper Figure Generation Specifications}
+\subsection{Visual Style}
+All generated figures should follow a consistent technical style. The background should be white, labels should be dark gray or black, and accent colors should be used sparingly. Recommended accent colors are blue for data flow, green for Good state, orange for Weak Signal, and red for Motion. Fonts should be simple sans-serif and readable after scaling to IEEE column width.
+
+Figures should avoid excessive decoration. The purpose is not artistic realism but technical communication. Block diagrams should have aligned boxes and consistent arrow spacing. Waveform plots should have clear axes and annotations. Hardware illustrations should be realistic enough to identify components but not cluttered with unnecessary details.
+
+\subsection{Export Requirements}
+Final figures should be exported as PDF, PNG, or EPS. For line diagrams, vector PDF is preferred. For waveform plots, high-resolution PNG or PDF is acceptable. A single-column figure should remain readable at about 8.8 cm width, while a double-column figure should remain readable at about 18 cm width. Text labels should not become smaller than typical IEEE figure labels after scaling.
+
+\section{Future Work}
+Several improvements can increase the reliability and research value of the prototype. First, the mechanical clip should be redesigned with controlled pressure and better ambient-light shielding. Second, the signal-processing pipeline should include a band-pass filter and adaptive peak threshold. Third, the serial protocol should include frame headers, sequence numbers, and checksums. Fourth, red and infrared channels should be jointly analyzed to improve quality assessment and potentially support oxygen-related experiments. Fifth, synchronized ECG or medical pulse-oximeter data should be collected for reference validation.
+
+A larger user study would also be valuable. Different users may have different finger sizes, skin properties, peripheral perfusion, and motion patterns. Testing across users would allow thresholds to be calibrated more systematically. It would also help separate algorithm limitations from mechanical contact limitations. For educational use, a dataset containing raw waveform examples of Good, Weak Signal, and Motion states would be useful for teaching signal-quality analysis.
+
+\section{Recommended Image Generation Prompts}
+The placeholders in this paper are intended to be replaced by clean technical illustrations. The following prompt strategy is recommended. Each image should be generated in a flat vector-like engineering style, with white background, dark text, simple arrows, and minimal decorative elements. The diagrams should avoid photorealistic clutter unless a hardware photo is specifically desired.
+
+For the architecture figure, the image should show a left-to-right pipeline: fingertip in clip, MAX30102 optical sensor, Arduino processing board, USB serial link, laptop GUI, and output indicators HR, HRV, PI, and quality state. The quality-state feedback should be shown as a loop from GUI to user guidance.
+
+For the hardware figure, the image should show the physical prototype with labels. The sensor should be close to the fingertip, the Arduino should be connected by I2C wires, and the laptop should display a waveform. The final diagram should look like an annotated laboratory setup rather than a marketing image.
+
+For the waveform comparison figure, three panels should be shown: Good, Weak Signal, and Motion. The Good panel should have clear periodic peaks. The Weak Signal panel should have low amplitude and flat morphology. The Motion panel should have irregular peaks and unstable intervals. Use peak markers and RR interval brackets.
+
+\begin{thebibliography}{8}
+
+\bibitem{allen2007ppg}
+J. Allen, ``Photoplethysmography and its application in clinical physiological measurement,'' \textit{Physiological Measurement}, vol. 28, no. 3, pp. R1--R39, 2007, doi: \url{https://doi.org/10.1088/0967-3334/28/3/R01}.
+
+\bibitem{elgendi2012ppg}
+M. Elgendi, ``On the analysis of fingertip photoplethysmogram signals,'' \textit{Current Cardiology Reviews}, vol. 8, no. 1, pp. 14--25, 2012, doi: \url{https://doi.org/10.2174/157340312801215782}.
+
+\bibitem{shaffer2017hrv}
+F. Shaffer and J. P. Ginsberg, ``An overview of heart rate variability metrics and norms,'' \textit{Frontiers in Public Health}, vol. 5, article 258, 2017, doi: \url{https://doi.org/10.3389/fpubh.2017.00258}.
+
+\bibitem{taskforce1996hrv}
+Task Force of the European Society of Cardiology and the North American Society of Pacing and Electrophysiology, ``Heart rate variability: Standards of measurement, physiological interpretation and clinical use,'' \textit{Circulation}, vol. 93, no. 5, pp. 1043--1065, 1996.
+
+\bibitem{max30102}
+Maxim Integrated, ``MAX30102 High-Sensitivity Pulse Oximeter and Heart-Rate Sensor for Wearable Health,'' Data Sheet.
+
+\bibitem{arduino}
+Arduino Documentation, ``Arduino serial communication and I2C reference.'' [Online]. Available: \url{https://docs.arduino.cc/}
+
+\bibitem{pyqtgraph}
+PyQtGraph Documentation, ``Scientific Graphics and GUI Library for Python.'' [Online]. Available: \url{https://pyqtgraph.readthedocs.io/}
+
+\bibitem{groupreport}
+Project Team, ``Finger-Clip Peripheral Circulation Monitoring System Based on PPG Features and Perfusion Index,'' Project materials, 2026.
+
+\end{thebibliography}
+
+\end{document}
